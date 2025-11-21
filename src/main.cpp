@@ -3,8 +3,12 @@
 #endif
 
 #include <iostream>
+#include <ctime>
+#include <format>
 
 
+#include <unistd.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/epoll.h>
@@ -18,11 +22,18 @@
 #define MAX_EVENTS 200
 #define MAX_MESSAGE_LENGTH 1024
 
+static int numberOfConnectionsPerExecution = 0;
+
 
 int parseCommand(std::string &command);
+char *getTime();
 
 
 int main(){
+    // Ignoring SIGPIPE signal.
+    signal(SIGPIPE, SIG_IGN);
+
+
     // Creating epoll object.
     int efd = epoll_create1(0);
     if(efd == -1){
@@ -58,10 +69,10 @@ int main(){
         std::cerr << "Unable to open UDP socket." << std::endl;
         return EXIT_FAILURE;
     }
-    if((listen(usfd, MAX_NUMBEROF_CONN)) != 0){
-        std::cerr << "Unable to listen to UDP socket." << std::endl;
-        return EXIT_FAILURE;
-    }
+    //if((listen(usfd, MAX_NUMBEROF_CONN)) != 0){
+    //    std::cerr << "Unable to listen to UDP socket." << std::endl;
+    //    return EXIT_FAILURE;
+    //}
 
 
     // Bind epoll.
@@ -105,23 +116,174 @@ int main(){
                     return EXIT_FAILURE;
                 }
                 
-                char buffer[MAX_MESSAGE_LENGTH];
+                char *buffer = new char[MAX_MESSAGE_LENGTH];
                 int bytes_read = 0;
-                if((bytes_read = recv(connSock, buffer, MAX_MESSAGE_LENGTH, MSG_DONTWAIT)) == -1){
+                if((bytes_read = recv(connSock, buffer, MAX_MESSAGE_LENGTH, 0)) == -1){
                     std::cerr << "Error occured while receiving data." << std::endl;
+                    delete buffer;
+                    close(connSock);
                     return EXIT_FAILURE;
                 }
 
+                std::string strBuffer(buffer);
+                int status = parseCommand(strBuffer);
 
+                if(!status){
+                    int bytes_send = 0;
+                    if((bytes_send = send(connSock, buffer, bytes_read, 0)) == -1){
+                        std::cerr << "Error occured while sending data." << std::endl;
+                        delete buffer;
+                        close(connSock);
+                        return EXIT_FAILURE;
+                    }
+                    close(connSock);
+                    delete buffer;
+                }
+                else if(status){
+                    int bytes_send = 0;
+                    char *time_buffer = getTime();
+                    if(time_buffer == nullptr){
+                        close(connSock);
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    if((bytes_send = send(connSock, time_buffer, sizeof(time_buffer), 0)) == -1){
+                        std::cerr << "Error occured while sending data." << std::endl;
+                        close(connSock);
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    close(connSock);
+                    delete buffer;
+                }
+                else if(status == 2){
+                    int bytes_send = 0;
+                    std::string stats_buffer = std::format("Number of connections per execution = {}\nNumber of current connections = {}",\
+                        numberOfConnectionsPerExecution, numberOfFds);
+                    if((bytes_send = send(connSock, stats_buffer.data(), stats_buffer.size(), 0)) == -1){
+                        std::cerr << "Error occured while sending data." << std::endl;
+                        close(connSock);
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    close(connSock);
+                    delete buffer;
+                }
+                else if(status == 3){
+                    int bytes_send = 0;
+                    char exit_message[] = "shutdown initiated.";
+                    if((bytes_send = send(connSock, exit_message, sizeof(exit_message), 0)) == -1){
+                        std::cerr << "Error occured while sending data." << std::endl;
+                        close(connSock);
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    if(epoll_ctl(efd, EPOLL_CTL_DEL, tsfd, NULL) == -1){
+                        std::cerr << "Unable to detach TCP socket from events." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    if(epoll_ctl(efd, EPOLL_CTL_DEL, usfd, NULL) == -1){
+                        std::cerr << "Unable to detach UDP socket from events." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
 
-                
+                    if(close(tsfd) == -1){
+                        std::cerr << "Unable to close TCP socket." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    if(close(usfd) == -1){
+                        std::cerr << "Unable to close UDP socket." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    delete buffer;
+                    exit(EXIT_SUCCESS);
+                }
+            }
+            else if(events[counter].data.fd == usfd){
+                char *buffer = new char[MAX_MESSAGE_LENGTH];
+                int bytes_read = 0;
+                if((bytes_read = recv(usfd, buffer, MAX_MESSAGE_LENGTH, 0)) == -1){
+                    std::cerr << "Error occured while receiving data." << std::endl;
+                    delete buffer;
+                    return EXIT_FAILURE;
+                }
 
+                std::string strBuffer(buffer);
+                int status = parseCommand(strBuffer);
+
+                if(!status){
+                    int bytes_send = 0;
+                    if((bytes_send = send(usfd, buffer, bytes_read, 0)) == -1){
+                        std::cerr << "Error occured while sending data." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    delete buffer;
+                }
+                else if(status){
+                    int bytes_send = 0;
+                    char *time_buffer = getTime();
+                    if(time_buffer == nullptr){
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    if((bytes_send = send(usfd, time_buffer, sizeof(time_buffer), 0)) == -1){
+                        std::cerr << "Error occured while sending data." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    delete buffer;
+                }
+                else if(status == 2){
+                    int bytes_send = 0;
+                    std::string stats_buffer = std::format("Number of connections per execution = {}\nNumber of current connections = {}",\
+                        numberOfConnectionsPerExecution, numberOfFds);
+                    if((bytes_send = send(usfd, stats_buffer.data(), stats_buffer.size(), 0)) == -1){
+                        std::cerr << "Error occured while sending data." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    delete buffer;
+                }
+                else if(status == 3){
+                    int bytes_send = 0;
+                    char exit_message[] = "shutdown initiated.";
+                    if((bytes_send = send(usfd, exit_message, sizeof(exit_message), 0)) == -1){
+                        std::cerr << "Error occured while sending data." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    if(epoll_ctl(efd, EPOLL_CTL_DEL, tsfd, NULL) == -1){
+                        std::cerr << "Unable to detach TCP socket from events." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    if(epoll_ctl(efd, EPOLL_CTL_DEL, usfd, NULL) == -1){
+                        std::cerr << "Unable to detach UDP socket from events." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+
+                    if(close(tsfd) == -1){
+                        std::cerr << "Unable to close TCP socket." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    if(close(usfd) == -1){
+                        std::cerr << "Unable to close UDP socket." << std::endl;
+                        delete buffer;
+                        return EXIT_FAILURE;
+                    }
+                    delete buffer;
+                    exit(EXIT_SUCCESS);
+                }
             }
         }
-
-
-
-
+        ++numberOfConnectionsPerExecution;
     }
     
 
@@ -133,5 +295,27 @@ int parseCommand(std::string &command){
     if(!command.contains("/")){
         return 0;
     }
+    else{
+        if(command.contains("/time")){
+            return 1;
+        }
+        else if(command.contains("/stats")){
+            return 2;
+        }
+        else if(command.contains("/shutdown")){
+            return 3;
+        }
+    }
     return 0;
+}
+
+
+char *getTime(){
+    int time_size = std::size("yyyy-mm-dd hh-mm-ss");
+    char *time_buffer = new char[time_size];
+    if(!std::strftime(time_buffer, time_size, "%Y-%m-%d %T", std::localtime(std::time_t()))){
+        std::cerr << "Unable to get current time" << std::endl;
+        return (char*)(nullptr);
+    }
+    return time_buffer;
 }
