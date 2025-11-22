@@ -23,7 +23,7 @@
 #define MAX_MESSAGE_LENGTH 1024
 
 static int numberOfConnectionsPerExecution = 0;
-
+static int time_size = std::size("yyyy-mm-dd hh-mm-ss");
 
 int parseCommand(std::string &command);
 char *getTime();
@@ -62,6 +62,7 @@ int main(){
     // UDP socket.
     int usfd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     sockaddr_in usaddr;
+    socklen_t usSockLen = sizeof(usaddr);
     usaddr.sin_family = AF_INET;
     usaddr.sin_port   = htons(UDP_PORT);
     usaddr.sin_addr.s_addr = htons(INADDR_ANY);
@@ -117,6 +118,10 @@ int main(){
                 }
                 
                 char *buffer = new char[MAX_MESSAGE_LENGTH];
+                if(buffer == NULL){
+                    std::cerr << "Not enough memory." << std::endl;
+                    return EXIT_FAILURE;
+                }
                 int bytes_read = 0;
                 if((bytes_read = recv(connSock, buffer, MAX_MESSAGE_LENGTH, 0)) == -1){
                     std::cerr << "Error occured while receiving data." << std::endl;
@@ -139,21 +144,22 @@ int main(){
                     close(connSock);
                     delete buffer;
                 }
-                else if(status){
+                else if(status == 1){
                     int bytes_send = 0;
                     char *time_buffer = getTime();
-                    if(time_buffer == nullptr){
+                    if(time_buffer == NULL){
                         close(connSock);
                         delete buffer;
                         return EXIT_FAILURE;
                     }
-                    if((bytes_send = send(connSock, time_buffer, sizeof(time_buffer), 0)) == -1){
+                    if((bytes_send = send(connSock, time_buffer, time_size, 0)) == -1){
                         std::cerr << "Error occured while sending data." << std::endl;
                         close(connSock);
                         delete buffer;
                         return EXIT_FAILURE;
                     }
                     close(connSock);
+                    delete time_buffer;
                     delete buffer;
                 }
                 else if(status == 2){
@@ -206,7 +212,9 @@ int main(){
             else if(events[counter].data.fd == usfd){
                 char *buffer = new char[MAX_MESSAGE_LENGTH];
                 int bytes_read = 0;
-                if((bytes_read = recv(usfd, buffer, MAX_MESSAGE_LENGTH, 0)) == -1){
+                sockaddr_in connAddr;
+                socklen_t connAddrSize = sizeof(connAddr);
+                if(bytes_read = recvfrom(usfd, buffer, MAX_MESSAGE_LENGTH, 0, (struct sockaddr*)&usaddr, &usSockLen) == -1){
                     std::cerr << "Error occured while receiving data." << std::endl;
                     delete buffer;
                     return EXIT_FAILURE;
@@ -217,21 +225,21 @@ int main(){
 
                 if(!status){
                     int bytes_send = 0;
-                    if((bytes_send = send(usfd, buffer, bytes_read, 0)) == -1){
+                    if(bytes_send = sendto(usfd, buffer, bytes_read, 0, (struct sockaddr*)&usaddr, usSockLen) == -1){
                         std::cerr << "Error occured while sending data." << std::endl;
                         delete buffer;
                         return EXIT_FAILURE;
                     }
                     delete buffer;
                 }
-                else if(status){
+                else if(status == 1){
                     int bytes_send = 0;
                     char *time_buffer = getTime();
                     if(time_buffer == nullptr){
                         delete buffer;
                         return EXIT_FAILURE;
                     }
-                    if((bytes_send = send(usfd, time_buffer, sizeof(time_buffer), 0)) == -1){
+                    if(bytes_send = sendto(usfd, buffer, bytes_read, 0, (struct sockaddr*)&usaddr, usSockLen) == -1){
                         std::cerr << "Error occured while sending data." << std::endl;
                         delete buffer;
                         return EXIT_FAILURE;
@@ -242,7 +250,7 @@ int main(){
                     int bytes_send = 0;
                     std::string stats_buffer = std::format("Number of connections per execution = {}\nNumber of current connections = {}",\
                         numberOfConnectionsPerExecution, numberOfFds);
-                    if((bytes_send = send(usfd, stats_buffer.data(), stats_buffer.size(), 0)) == -1){
+                    if(bytes_send = sendto(usfd, buffer, bytes_read, 0, (struct sockaddr*)&usaddr, usSockLen) == -1){
                         std::cerr << "Error occured while sending data." << std::endl;
                         delete buffer;
                         return EXIT_FAILURE;
@@ -252,7 +260,7 @@ int main(){
                 else if(status == 3){
                     int bytes_send = 0;
                     char exit_message[] = "shutdown initiated.";
-                    if((bytes_send = send(usfd, exit_message, sizeof(exit_message), 0)) == -1){
+                    if(bytes_send = sendto(usfd, buffer, bytes_read, 0, (struct sockaddr*)&usaddr, usSockLen) == -1){
                         std::cerr << "Error occured while sending data." << std::endl;
                         delete buffer;
                         return EXIT_FAILURE;
@@ -311,11 +319,11 @@ int parseCommand(std::string &command){
 
 
 char *getTime(){
-    int time_size = std::size("yyyy-mm-dd hh-mm-ss");
     char *time_buffer = new char[time_size];
-    if(!std::strftime(time_buffer, time_size, "%Y-%m-%d %T", std::localtime(std::time_t()))){
+    std::time_t time = std::time({});
+    if(!std::strftime(time_buffer, time_size, "%Y-%m-%d %T", std::gmtime(&time))){
         std::cerr << "Unable to get current time" << std::endl;
-        return (char*)(nullptr);
+        return nullptr;
     }
     return time_buffer;
 }
