@@ -138,7 +138,6 @@ int main(){
 
 
         for(int counter = 0; counter < numberOfFds; ++counter){
-            char buffer[MAX_MESSAGE_LENGTH];
             // Work with TCP.
             if(events[counter].data.fd == tcpfd){
                 int connSocket = accept(tcpfd, (struct sockaddr*)&tcpaddr, &tcpaddrlen);
@@ -152,9 +151,11 @@ int main(){
 
 
                 int bytesRead = 0;
+                char tcpBuffer[MAX_MESSAGE_LENGTH];
+                memset(tcpBuffer, 0, MAX_MESSAGE_LENGTH);
 
 
-                if((bytesRead = recv(connSocket, buffer, MAX_MESSAGE_LENGTH, 0)) == -1){
+                if((bytesRead = recv(connSocket, tcpBuffer, MAX_MESSAGE_LENGTH, 0)) == -1){
                     std::cerr << "Error occurred while receiving data." << std::endl;
                     close(tcpfd);
                     close(udpfd);
@@ -164,7 +165,7 @@ int main(){
                 }
 
 
-                std::string strBuffer(buffer);
+                std::string strBuffer(tcpBuffer);
                 int status = parseInput(strBuffer);
 
 
@@ -175,8 +176,8 @@ int main(){
 
 
                 if(status == 0){
-                    std::cout << "answer=" << buffer << std::endl;
-                    if((bytesSend = send(connSocket, buffer, bytesRead, 0)) == -1){
+                    std::cout << "answer=" << tcpBuffer << std::endl;
+                    if((bytesSend = send(connSocket, tcpBuffer, bytesRead, 0)) == -1){
                         std::cerr << "Error occurred while sending data." << std::endl;
                         close(tcpfd);
                         close(udpfd);
@@ -232,9 +233,11 @@ int main(){
             }
             else if(events[counter].data.fd == udpfd){
                 int bytesRead = 0;
+                char udpBuffer[MAX_MESSAGE_LENGTH];
+                memset(udpBuffer, 0, MAX_MESSAGE_LENGTH);
 
 
-                if((bytesRead = recvfrom(udpfd, buffer, MAX_MESSAGE_LENGTH, 0, (struct sockaddr*)&udprecaddr, &udprecaddrlen)) == -1){
+                if((bytesRead = recvfrom(udpfd, udpBuffer, MAX_MESSAGE_LENGTH, 0, (struct sockaddr*)&udprecaddr, &udprecaddrlen)) == -1){
                     std::cerr << "Error occurred while receiving data." << std::endl;
                     close(tcpfd);
                     close(udpfd);
@@ -243,7 +246,7 @@ int main(){
                 }
 
 
-                std::string strBuffer(buffer);
+                std::string strBuffer(udpBuffer);
                 int status = parseInput(strBuffer);
 
 
@@ -254,8 +257,8 @@ int main(){
 
 
                 if(status == 0){
-                    std::cout << "answer=" << buffer << std::endl;
-                    if((bytesSend = sendto(udpfd, buffer, bytesRead, 0, (struct sockaddr*)&udprecaddr, udprecaddrlen)) == -1){
+                    std::cout << "answer=" << udpBuffer << std::endl;
+                    if((bytesSend = sendto(udpfd, udpBuffer, bytesRead, 0, (struct sockaddr*)&udprecaddr, udprecaddrlen)) == -1){
                         std::cerr << "Error occurred while sending data." << std::endl;
                         close(tcpfd);
                         close(udpfd);
@@ -303,7 +306,6 @@ int main(){
                     exit(EXIT_SUCCESS);
                 }
             }
-            memset(buffer, 0, MAX_MESSAGE_LENGTH);
             ++nocpe;
         }
     }
