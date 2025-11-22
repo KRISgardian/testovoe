@@ -2,38 +2,43 @@
 #define UNICODE
 #endif
 
+
 #include <iostream>
 #include <ctime>
+#include <cstring>
 #include <format>
 
 
 #include <unistd.h>
 #include <signal.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
 #include <sys/epoll.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
+
 
 
 #define TCP_PORT 11500
 #define UDP_PORT 11501
 
-#define MAX_NUMBEROF_CONN 100
-#define MAX_EVENTS 200
-#define MAX_MESSAGE_LENGTH 1024
 
-static int numberOfConnectionsPerExecution = 0;
-static int time_size = std::size("yyyy-mm-dd hh-mm-ss");
+#define MAX_NUMBEROF_CONNS 100  // Max number of connections(max length of the queue).
+#define MAX_EVENTS 200          // Max number of epoll events(epoll queue).
+#define MAX_MESSAGE_LENGTH 1024 // Max length of receiving message.
 
-int parseCommand(std::string &command);
+
+
+static int nocpe = 0; // Number of connectiosn per program execution.
+static int timeSize = std::size("yyyy-mm-dd hh:mm:ss") + 1; // Size of the time in required format.
+
+
+
+int parseInput(std::string &buffer);
 char *getTime();
 
 
+
 int main(){
-    // Ignoring SIGPIPE signal.
-    signal(SIGPIPE, SIG_IGN);
-
-
     // Creating epoll object.
     int efd = epoll_create1(0);
     if(efd == -1){
@@ -44,57 +49,78 @@ int main(){
 
     // Creating sockets.
     // TCP socket.
-    int tsfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-    sockaddr_in tsaddr;
-    tsaddr.sin_family = AF_INET;
-    tsaddr.sin_port   = htons(TCP_PORT);
-    tsaddr.sin_addr.s_addr = htons(INADDR_ANY);
-    if(bind(tsfd, (struct sockaddr*)&tsaddr, sizeof(tsaddr)) < 0){
-        std::cerr << "Unable to open TCP socket." << std::endl;
+    int tcpfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    
+    sockaddr_in tcpaddr;
+    socklen_t tcpaddrlen = sizeof(tcpaddr);
+    tcpaddr.sin_family      = AF_INET;
+    tcpaddr.sin_port        = htons(TCP_PORT);
+    tcpaddr.sin_addr.s_addr = htons(INADDR_ANY);
+
+    if(bind(tcpfd, (struct sockaddr*)&tcpaddr, sizeof(tcpaddr)) < 0){
+        std::cerr << "Unable to bind TCP socket." << std::endl;
+        close(tcpfd);
+        close(efd);
         return EXIT_FAILURE;
     }
-    if((listen(tsfd, MAX_NUMBEROF_CONN)) != 0){
+
+    if(listen(tcpfd, MAX_NUMBEROF_CONNS) != 0){
         std::cerr << "Unable to listen to TCP socket." << std::endl;
+        close(tcpfd);
+        close(efd);
         return EXIT_FAILURE;
     }
 
 
     // UDP socket.
-    int usfd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
-    sockaddr_in usaddr;
-    socklen_t usSockLen = sizeof(usaddr);
-    usaddr.sin_family = AF_INET;
-    usaddr.sin_port   = htons(UDP_PORT);
-    usaddr.sin_addr.s_addr = htons(INADDR_ANY);
-    if(bind(usfd, (struct sockaddr*)&usaddr, sizeof(usaddr)) < 0){
-        std::cerr << "Unable to open UDP socket." << std::endl;
+    int udpfd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    
+    sockaddr_in udpaddr, udprecaddr;
+    socklen_t udpaddrlen    = sizeof(udpaddr);
+    socklen_t udprecaddrlen = sizeof(udprecaddr);
+    udpaddr.sin_family      = AF_INET;
+    udpaddr.sin_port        = htons(UDP_PORT);
+    udpaddr.sin_addr.s_addr = htons(INADDR_ANY);
+
+    if(bind(udpfd, (struct sockaddr*)&udpaddr, sizeof(udpaddr)) < 0){
+        std::cerr << "Unable to bind UDP socket." << std::endl;
+        close(tcpfd);
+        close(udpfd);
+        close(efd);
         return EXIT_FAILURE;
     }
-    //if((listen(usfd, MAX_NUMBEROF_CONN)) != 0){
-    //    std::cerr << "Unable to listen to UDP socket." << std::endl;
-    //    return EXIT_FAILURE;
-    //}
+
 
 
     // Bind epoll.
-    epoll_event tcp_event;
-    tcp_event.events = EPOLLIN | EPOLLET;
-    tcp_event.data.fd = tsfd;
-
-    epoll_event udp_event;
-    udp_event.events = EPOLLIN | EPOLLET;
-    udp_event.data.fd = usfd;
+    epoll_event tcpEvent;
+    tcpEvent.events = EPOLLIN | EPOLLET;
+    tcpEvent.data.fd = tcpfd;
 
 
-    if((epoll_ctl(efd, EPOLL_CTL_ADD, tsfd, &tcp_event)) == -1){
-        std::cerr << "Epoll append operation error." << std::endl;
+    epoll_event udpEvent;
+    udpEvent.events = EPOLLIN | EPOLLET;
+    udpEvent.data.fd = udpfd;
+
+
+
+    if(epoll_ctl(efd, EPOLL_CTL_ADD, tcpfd, &tcpEvent) == -1){
+        std::cerr << "Epoll bind operation error." << std::endl;
+        close(tcpfd);
+        close(udpfd);
+        close(efd);
         return EXIT_FAILURE;
     }
 
-    if((epoll_ctl(efd, EPOLL_CTL_ADD, usfd, &udp_event)) == -1){
-        std::cerr << "Epoll append operation error." << std::endl;
+
+    if(epoll_ctl(efd, EPOLL_CTL_ADD, udpfd, &udpEvent) == -1){
+        std::cerr << "Epoll bind operation error." << std::endl;
+        close(tcpfd);
+        close(udpfd);
+        close(efd);
         return EXIT_FAILURE;
     }
+
 
 
     // Main loop.
@@ -103,227 +129,215 @@ int main(){
     for(;;){
         numberOfFds = epoll_wait(efd, events, MAX_EVENTS, -1);
         if(numberOfFds == -1){
-            std::cerr << "Epoll operation error." << std::endl;
+            std::cerr << "Main queue error." << std::endl;
+            close(tcpfd);
+            close(udpfd);
+            close(efd);
             return EXIT_FAILURE;
         }
 
+
         for(int counter = 0; counter < numberOfFds; ++counter){
+            char buffer[MAX_MESSAGE_LENGTH];
             // Work with TCP.
-            if(events[counter].data.fd == tsfd){
-                socklen_t conAddrSize = sizeof(tsaddr);
-                int connSock = accept(tsfd, (struct sockaddr*)&tsaddr, &conAddrSize);
-                if(connSock == -1){
-                    std::cerr << "Socket error." << std::endl;
+            if(events[counter].data.fd == tcpfd){
+                int connSocket = accept(tcpfd, (struct sockaddr*)&tcpaddr, &tcpaddrlen);
+                if(connSocket == -1){
+                    std::cerr << "Unable to accept TCP connection." << std::endl;
+                    close(tcpfd);
+                    close(udpfd);
+                    close(efd);
+                    break;
+                }
+
+
+                int bytesRead = 0;
+
+
+                if((bytesRead = recv(connSocket, buffer, MAX_MESSAGE_LENGTH, 0)) == -1){
+                    std::cerr << "Error occurred while receiving data." << std::endl;
+                    close(tcpfd);
+                    close(udpfd);
+                    close(efd);
+                    close(connSocket);
                     return EXIT_FAILURE;
                 }
-                
-                char *buffer = new char[MAX_MESSAGE_LENGTH];
-                if(buffer == NULL){
-                    std::cerr << "Not enough memory." << std::endl;
-                    return EXIT_FAILURE;
-                }
-                int bytes_read = 0;
-                if((bytes_read = recv(connSock, buffer, MAX_MESSAGE_LENGTH, 0)) == -1){
-                    std::cerr << "Error occured while receiving data." << std::endl;
-                    delete buffer;
-                    close(connSock);
-                    return EXIT_FAILURE;
-                }
+
 
                 std::string strBuffer(buffer);
-                int status = parseCommand(strBuffer);
+                int status = parseInput(strBuffer);
 
-                if(!status){
-                    int bytes_send = 0;
-                    if((bytes_send = send(connSock, buffer, bytes_read, 0)) == -1){
-                        std::cerr << "Error occured while sending data." << std::endl;
-                        delete buffer;
-                        close(connSock);
+
+                std::cout << "message=" << strBuffer << "status=" << status << std::endl;
+
+
+                int bytesSend = 0;
+
+
+                if(status == 0){
+                    std::cout << "answer=" << buffer << std::endl;
+                    if((bytesSend = send(connSocket, buffer, bytesRead, 0)) == -1){
+                        std::cerr << "Error occurred while sending data." << std::endl;
+                        close(tcpfd);
+                        close(udpfd);
+                        close(efd);
+                        close(connSocket);
                         return EXIT_FAILURE;
                     }
-                    close(connSock);
-                    delete buffer;
                 }
                 else if(status == 1){
-                    int bytes_send = 0;
-                    char *time_buffer = getTime();
-                    if(time_buffer == NULL){
-                        close(connSock);
-                        delete buffer;
+                    char *answer = getTime();
+                    std::cout << "answer=" << answer << std::endl;
+                    if((bytesSend = send(connSocket, answer, timeSize, 0)) == -1){
+                        std::cerr << "Error occurred while sending data." << std::endl;
+                        delete(answer);
+                        close(tcpfd);
+                        close(udpfd);
+                        close(efd);
+                        close(connSocket);
                         return EXIT_FAILURE;
                     }
-                    if((bytes_send = send(connSock, time_buffer, time_size, 0)) == -1){
-                        std::cerr << "Error occured while sending data." << std::endl;
-                        close(connSock);
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-                    close(connSock);
-                    delete time_buffer;
-                    delete buffer;
+                    delete(answer);
                 }
                 else if(status == 2){
-                    int bytes_send = 0;
-                    std::string stats_buffer = std::format("Number of connections per execution = {}\nNumber of current connections = {}",\
-                        numberOfConnectionsPerExecution, numberOfFds);
-                    if((bytes_send = send(connSock, stats_buffer.data(), stats_buffer.size(), 0)) == -1){
-                        std::cerr << "Error occured while sending data." << std::endl;
-                        close(connSock);
-                        delete buffer;
+                    std::string stats = std::format("Number of connections per execution = {}\nNumber of current connections = {}\n", nocpe, numberOfFds);
+                    std::cout << "answer=" << stats << std::endl;
+                    if((bytesSend = send(connSocket, stats.data(), stats.size(), 0)) == -1){
+                        std::cerr << "Error occurred while sending data." << std::endl;
+                        close(tcpfd);
+                        close(udpfd);
+                        close(efd);
+                        close(connSocket);
                         return EXIT_FAILURE;
                     }
-                    close(connSock);
-                    delete buffer;
                 }
                 else if(status == 3){
-                    int bytes_send = 0;
-                    char exit_message[] = "shutdown initiated.";
-                    if((bytes_send = send(connSock, exit_message, sizeof(exit_message), 0)) == -1){
-                        std::cerr << "Error occured while sending data." << std::endl;
-                        close(connSock);
-                        delete buffer;
+                    char exitMessage[] = "shutdown initiated\n";
+                    std::cout << "answer=" << exitMessage << std::endl;
+                    if((bytesSend = send(connSocket, exitMessage, sizeof(exitMessage), 0)) == -1){
+                        std::cerr << "Error occurred while sending data." << std::endl;
+                        close(tcpfd);
+                        close(udpfd);
+                        close(efd);
+                        close(connSocket);
                         return EXIT_FAILURE;
                     }
-                    if(epoll_ctl(efd, EPOLL_CTL_DEL, tsfd, NULL) == -1){
-                        std::cerr << "Unable to detach TCP socket from events." << std::endl;
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-                    if(epoll_ctl(efd, EPOLL_CTL_DEL, usfd, NULL) == -1){
-                        std::cerr << "Unable to detach UDP socket from events." << std::endl;
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
+                    close(tcpfd);
+                    close(udpfd);
+                    close(efd);
+                    close(connSocket);
+                    exit(EXIT_SUCCESS);
+                }
+                close(connSocket);
+            }
+            else if(events[counter].data.fd == udpfd){
+                int bytesRead = 0;
 
-                    if(close(tsfd) == -1){
-                        std::cerr << "Unable to close TCP socket." << std::endl;
-                        delete buffer;
+
+                if((bytesRead = recvfrom(udpfd, buffer, MAX_MESSAGE_LENGTH, 0, (struct sockaddr*)&udprecaddr, &udprecaddrlen)) == -1){
+                    std::cerr << "Error occurred while receiving data." << std::endl;
+                    close(tcpfd);
+                    close(udpfd);
+                    close(efd);
+                    return EXIT_FAILURE;
+                }
+
+
+                std::string strBuffer(buffer);
+                int status = parseInput(strBuffer);
+
+
+                std::cout << "message=" << strBuffer << "status=" << status << std::endl;
+
+
+                int bytesSend = 0;
+
+
+                if(status == 0){
+                    std::cout << "answer=" << buffer << std::endl;
+                    if((bytesSend = sendto(udpfd, buffer, bytesRead, 0, (struct sockaddr*)&udprecaddr, udprecaddrlen)) == -1){
+                        std::cerr << "Error occurred while sending data." << std::endl;
+                        close(tcpfd);
+                        close(udpfd);
+                        close(efd);
                         return EXIT_FAILURE;
                     }
-                    if(close(usfd) == -1){
-                        std::cerr << "Unable to close UDP socket." << std::endl;
-                        delete buffer;
+                }
+                else if(status == 1){
+                    char *answer = getTime();
+                    std::cout << "answer=" << answer << std::endl;
+                    if((bytesSend = sendto(udpfd, answer, timeSize, 0, (struct sockaddr*)&udprecaddr, udprecaddrlen)) == -1){
+                        std::cerr << "Error occurred while sending data." << std::endl;
+                        delete(answer);
+                        close(tcpfd);
+                        close(udpfd);
+                        close(efd);
                         return EXIT_FAILURE;
                     }
-                    delete buffer;
+                    delete(answer);
+                }
+                else if(status == 2){
+                    std::string stats = std::format("Number of connections per execution = {}\nNumber of current connections = {}\n", nocpe, numberOfFds);
+                    std::cout << "answer=" << stats << std::endl;
+                    if((bytesSend = sendto(udpfd, stats.data(), stats.size(), 0, (struct sockaddr*)&udprecaddr, udprecaddrlen)) == -1){
+                        std::cerr << "Error occurred while sending data." << std::endl;
+                        close(tcpfd);
+                        close(udpfd);
+                        close(efd);
+                        return EXIT_FAILURE;
+                    }
+                }
+                else if(status == 3){
+                    char exitMessage[] = "shutdown initiated\n";
+                    std::cout << "answer=" << exitMessage << std::endl;
+                    if((bytesSend = sendto(udpfd, exitMessage, sizeof(exitMessage), 0, (struct sockaddr*)&udprecaddr, udprecaddrlen)) == -1){
+                        std::cerr << "Error occurred while sending data." << std::endl;
+                        close(tcpfd);
+                        close(udpfd);
+                        close(efd);
+                        return EXIT_FAILURE;
+                    }
+                    close(tcpfd);
+                    close(udpfd);
+                    close(efd);
                     exit(EXIT_SUCCESS);
                 }
             }
-            else if(events[counter].data.fd == usfd){
-                char *buffer = new char[MAX_MESSAGE_LENGTH];
-                int bytes_read = 0;
-                sockaddr_in connAddr;
-                socklen_t connAddrSize = sizeof(connAddr);
-                if(bytes_read = recvfrom(usfd, buffer, MAX_MESSAGE_LENGTH, 0, (struct sockaddr*)&usaddr, &usSockLen) == -1){
-                    std::cerr << "Error occured while receiving data." << std::endl;
-                    delete buffer;
-                    return EXIT_FAILURE;
-                }
-
-                std::string strBuffer(buffer);
-                int status = parseCommand(strBuffer);
-
-                if(!status){
-                    int bytes_send = 0;
-                    if(bytes_send = sendto(usfd, buffer, bytes_read, 0, (struct sockaddr*)&usaddr, usSockLen) == -1){
-                        std::cerr << "Error occured while sending data." << std::endl;
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-                    delete buffer;
-                }
-                else if(status == 1){
-                    int bytes_send = 0;
-                    char *time_buffer = getTime();
-                    if(time_buffer == nullptr){
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-                    if(bytes_send = sendto(usfd, buffer, bytes_read, 0, (struct sockaddr*)&usaddr, usSockLen) == -1){
-                        std::cerr << "Error occured while sending data." << std::endl;
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-                    delete buffer;
-                }
-                else if(status == 2){
-                    int bytes_send = 0;
-                    std::string stats_buffer = std::format("Number of connections per execution = {}\nNumber of current connections = {}",\
-                        numberOfConnectionsPerExecution, numberOfFds);
-                    if(bytes_send = sendto(usfd, buffer, bytes_read, 0, (struct sockaddr*)&usaddr, usSockLen) == -1){
-                        std::cerr << "Error occured while sending data." << std::endl;
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-                    delete buffer;
-                }
-                else if(status == 3){
-                    int bytes_send = 0;
-                    char exit_message[] = "shutdown initiated.";
-                    if(bytes_send = sendto(usfd, buffer, bytes_read, 0, (struct sockaddr*)&usaddr, usSockLen) == -1){
-                        std::cerr << "Error occured while sending data." << std::endl;
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-                    if(epoll_ctl(efd, EPOLL_CTL_DEL, tsfd, NULL) == -1){
-                        std::cerr << "Unable to detach TCP socket from events." << std::endl;
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-                    if(epoll_ctl(efd, EPOLL_CTL_DEL, usfd, NULL) == -1){
-                        std::cerr << "Unable to detach UDP socket from events." << std::endl;
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-
-                    if(close(tsfd) == -1){
-                        std::cerr << "Unable to close TCP socket." << std::endl;
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-                    if(close(usfd) == -1){
-                        std::cerr << "Unable to close UDP socket." << std::endl;
-                        delete buffer;
-                        return EXIT_FAILURE;
-                    }
-                    delete buffer;
-                    exit(EXIT_SUCCESS);
-                }
-            }
+            memset(buffer, 0, MAX_MESSAGE_LENGTH);
+            ++nocpe;
         }
-        ++numberOfConnectionsPerExecution;
     }
-    
-
     return EXIT_SUCCESS;
 }
 
 
-int parseCommand(std::string &command){
-    if(!command.contains("/")){
+
+char *getTime(){
+    char *timeBuffer = new char[timeSize];
+    std::time_t time = std::time({});
+    if(!std::strftime(timeBuffer, timeSize, "%Y-%m-%d %T%n", std::gmtime(&time))){
+        std::cerr << "Unable to get current time" << std::endl;
+        return nullptr;
+    }
+    return timeBuffer;
+}
+
+
+
+int parseInput(std::string &buffer){
+    if(!buffer.contains("/")){
         return 0;
     }
     else{
-        if(command.contains("/time")){
+        if(buffer.contains("/time")){
             return 1;
         }
-        else if(command.contains("/stats")){
+        else if(buffer.contains("/stats")){
             return 2;
         }
-        else if(command.contains("/shutdown")){
+        else if(buffer.contains("/shutdown")){
             return 3;
         }
     }
     return 0;
-}
-
-
-char *getTime(){
-    char *time_buffer = new char[time_size];
-    std::time_t time = std::time({});
-    if(!std::strftime(time_buffer, time_size, "%Y-%m-%d %T", std::gmtime(&time))){
-        std::cerr << "Unable to get current time" << std::endl;
-        return nullptr;
-    }
-    return time_buffer;
 }
