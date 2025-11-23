@@ -18,7 +18,7 @@ jobs:
               run: mkdir build bin
 
             - name: Getting dependencies
-              run: sudo apt-get install make git -y && sudo apt install gcc-14 g++-14 -y && sudo snap install cmake & sudo apt autoremove
+              run: sudo apt-get install make git -y && sudo apt install gcc-14 g++-14 -y && sudo snap install cmake --classic & sudo apt autoremove
 
             - name: Generate cmake project
               run: cmake -G "Unix Makefiles" -B build

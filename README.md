@@ -8,7 +8,7 @@ Update and upgrade the system.
 
 Install dependencies.
 
-```sudo apt-get install make git -y && sudo apt install gcc-14 g++-14 -y && sudo snap install cmake & sudo apt autoremove```  
+```sudo apt-get install make git -y && sudo apt install gcc-14 g++-14 -y && sudo snap install cmake --classic & sudo apt autoremove```  
 
 Clone git repository.
 
