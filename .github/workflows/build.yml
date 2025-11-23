@@ -1,0 +1,30 @@
+name: Linux CI/CD
+on:
+    push:
+        branches:
+             - main
+
+
+
+jobs:
+    linux-deploy:
+        runs-on: [ubuntu-24.04]
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Setting up the environment
+              run: mkdir build bin
+
+            - name: Generate cmake project
+              run: cmake -G "Unix Makefiles" -B build
+
+            - name: Build cmake project
+              run: cmake --build build
+
+            - name: Install cmake project
+              run: cmake --install build
+            
+            - name: Cleaning the mess
+              run: rm -rf build bin

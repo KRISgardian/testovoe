@@ -50,3 +50,5 @@ or simply
 
 
 ## CI/CD
+
+[![CI Status](https://github.com/KRISgardian/testovoe/actions/workflows/build.yml/badge.svg)](https://github.com/KRISgardian/testovoe/actions)
