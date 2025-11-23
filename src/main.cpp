@@ -34,7 +34,7 @@ static int timeSize = std::size("yyyy-mm-dd hh:mm:ss") + 1; // Size of the time 
 
 
 int parseInput(std::string &buffer);
-char *getTime();
+char *getTime(char *buffer);
 
 
 
@@ -187,18 +187,17 @@ int main(){
                     }
                 }
                 else if(status == 1){
-                    char *answer = getTime();
+                    char answer[timeSize];
+                    getTime(answer);
                     std::cout << "answer=" << answer << std::endl;
                     if((bytesSend = send(connSocket, answer, timeSize, 0)) == -1){
                         std::cerr << "Error occurred while sending data." << std::endl;
-                        delete(answer);
                         close(tcpfd);
                         close(udpfd);
                         close(efd);
                         close(connSocket);
                         return EXIT_FAILURE;
                     }
-                    delete(answer);
                 }
                 else if(status == 2){
                     std::string stats = std::format("Number of connections per execution = {}\nNumber of current connections = {}\n", nocpe, numberOfFds);
@@ -267,17 +266,16 @@ int main(){
                     }
                 }
                 else if(status == 1){
-                    char *answer = getTime();
+                    char answer[timeSize];
+                    getTime(answer);
                     std::cout << "answer=" << answer << std::endl;
                     if((bytesSend = sendto(udpfd, answer, timeSize, 0, (struct sockaddr*)&udprecaddr, udprecaddrlen)) == -1){
                         std::cerr << "Error occurred while sending data." << std::endl;
-                        delete(answer);
                         close(tcpfd);
                         close(udpfd);
                         close(efd);
                         return EXIT_FAILURE;
                     }
-                    delete(answer);
                 }
                 else if(status == 2){
                     std::string stats = std::format("Number of connections per execution = {}\nNumber of current connections = {}\n", nocpe, numberOfFds);
@@ -314,14 +312,13 @@ int main(){
 
 
 
-char *getTime(){
-    char *timeBuffer = new char[timeSize];
+char *getTime(char *buffer){
     std::time_t time = std::time({});
-    if(!std::strftime(timeBuffer, timeSize, "%Y-%m-%d %T%n", std::gmtime(&time))){
+    if(!std::strftime(buffer, timeSize, "%Y-%m-%d %T%n", std::gmtime(&time))){
         std::cerr << "Unable to get current time" << std::endl;
         return nullptr;
     }
-    return timeBuffer;
+    return buffer;
 }
 
 
