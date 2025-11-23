@@ -1,0 +1,14 @@
+[Unit]
+Description=Testovoe
+After=network.target
+
+[Service]
+Type=notify
+ExecStart=~/testovoe/bin/testovoe
+ExecReload=~/testovoe/bin/testovoe
+KillMode=process
+Restart=on-failure
+
+
+[Install]
+WantedBy=multi-user.target
